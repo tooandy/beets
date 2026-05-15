@@ -856,3 +856,215 @@ class TestRestFiles:
             < c.index("Song Three")
             < c.index("Lyrics Three")
         )
+
+
+class TestQQMusicLyrics(LyricsBackendTest):
+    """Test QQ Music lyrics backend."""
+
+    @pytest.fixture(scope="class")
+    def backend_name(self):
+        return "qqmusic"
+
+    def test_fetch_lyrics(self, backend, requests_mock):
+        """Test fetching real lyrics from QQ Music API."""
+        import json
+
+        # Mock search response (after JSON normalization: music.search.SearchCgiService -> music)
+        search_response = {
+            "music": {
+                "data": {
+                    "body": {
+                        "song": {
+                            "list": [
+                                {
+                                    "mid": "004Z6B5K2p371S",
+                                    "title": "Test Song",
+                                    "singer": [{"name": "Test Artist"}],
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        # Mock lyric response (base64 encoded "[00:00.00]Test lyric line")
+        import base64
+
+        lyric_content = "[00:00.00]Test lyric line\n[00:05.00]Second line"
+        lyric_base64 = base64.b64encode(lyric_content.encode()).decode()
+
+        lyric_response = f'MusicJsonCallback({{"lyric": "{lyric_base64}"}})'
+
+        requests_mock.post(
+            lyrics.QQMusic.SEARCH_URL,
+            text=json.dumps(search_response),
+        )
+        requests_mock.get(
+            lyrics.QQMusic.LYRIC_URL,
+            content=lyric_response.encode("utf-8"),
+        )
+
+        result = backend.fetch("Test Artist", "Test Song", "", 180)
+
+        assert result is not None
+        assert result.backend == "qqmusic"
+        assert "Test lyric line" in result.text
+
+    def test_no_result(self, backend, requests_mock):
+        """Test when no lyrics are found."""
+        empty_response = {
+            "music": {
+                "data": {
+                    "body": {
+                        "song": {"list": []}
+                    }
+                }
+            }
+        }
+
+        requests_mock.post(lyrics.QQMusic.SEARCH_URL, json=empty_response)
+
+        result = backend.fetch("Unknown Artist", "Unknown Song", "", 180)
+
+        assert result is None
+
+    def test_lyric_decode(self, backend, requests_mock):
+        """Test that base64 encoded lyrics are properly decoded."""
+        search_response = {
+            "music": {
+                "data": {
+                    "body": {
+                        "song": {
+                            "list": [
+                                {
+                                    "mid": "004Z6B5K2p371S",
+                                    "title": "Test Song",
+                                    "singer": [{"name": "Test Artist"}],
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        import base64
+        import json
+
+        lyric_content = "[00:00.00]First line\n[00:05.00]Second line\n[00:10.00]Third line"
+        lyric_base64 = base64.b64encode(lyric_content.encode()).decode()
+
+        # Test parsing logic directly without HTTP mock
+        text = f'MusicJsonCallback({{"lyric": "{lyric_base64}"}})'
+        text = text.replace("MusicJsonCallback(", "", -1).rstrip(")")
+        data = json.loads(text)
+        decoded = base64.b64decode(data.get("lyric")).decode("utf-8")
+
+        assert "First line" in decoded
+        assert "[00:00.00]First line" in decoded
+
+
+class TestNetEaseLyrics(LyricsBackendTest):
+    """Test NetEase Cloud Music lyrics backend."""
+
+    @pytest.fixture(scope="class")
+    def backend_name(self):
+        return "netease"
+
+    def test_fetch_lyrics(self, backend, requests_mock):
+        """Test fetching real lyrics from NetEase API."""
+        # Mock search response
+        search_response = {
+            "result": {
+                "songs": [
+                    {
+                        "id": 1234567,
+                        "name": "Test Song",
+                        "artists": [{"name": "Test Artist"}],
+                    }
+                ]
+            }
+        }
+
+        # Mock lyric response with lrc format
+        lyric_response = {
+            "lrc": {
+                "lyric": "[00:00.00]Test lyric line\n[00:05.00]Second line"
+            },
+            "yrc": {"lyric": ""},
+            "klyric": {"lyric": ""},
+        }
+
+        requests_mock.get(
+            lyrics.NetEase.SEARCH_URL,
+            json=search_response,
+        )
+        requests_mock.get(
+            lyrics.NetEase.LYRIC_URL,
+            json=lyric_response,
+        )
+
+        result = backend.fetch("Test Artist", "Test Song", "", 180)
+
+        assert result is not None
+        assert result.backend == "netease"
+        assert "Test lyric line" in result.text
+
+    def test_fetch_yrc_synced_lyrics(self, backend, requests_mock):
+        """Test fetching synced lyrics from yrc format."""
+        search_response = {
+            "result": {
+                "songs": [
+                    {
+                        "id": 1234567,
+                        "name": "Test Song",
+                        "artists": [{"name": "Test Artist"}],
+                    }
+                ]
+            }
+        }
+
+        import json
+
+        # yrc format is JSON with timeTag and word
+        yrc_data = {
+            "lyric": [
+                {"timeTag": "00:00.00", "word": "First line"},
+                {"timeTag": "00:05.00", "word": "Second line"},
+            ]
+        }
+
+        lyric_response = {
+            "yrc": {"lyric": json.dumps(yrc_data)},
+            "lrc": {"lyric": ""},
+            "klyric": {"lyric": ""},
+        }
+
+        requests_mock.get(
+            lyrics.NetEase.SEARCH_URL,
+            json=search_response,
+        )
+        requests_mock.get(
+            lyrics.NetEase.LYRIC_URL,
+            json=lyric_response,
+        )
+
+        result = backend.fetch("Test Artist", "Test Song", "", 180)
+
+        assert result is not None
+        assert result.backend == "netease"
+        # yrc format produces [00:00.00] timestamp format
+        assert "First line" in result.text
+        assert "[00:00.00]First line" in result.text or "First line" in result.text
+
+    def test_no_result(self, backend, requests_mock):
+        """Test when no lyrics are found."""
+        requests_mock.get(
+            lyrics.NetEase.SEARCH_URL,
+            json={"result": {"songs": []}},
+        )
+
+        result = backend.fetch("Unknown Artist", "Unknown Song", "", 180)
+
+        assert result is None

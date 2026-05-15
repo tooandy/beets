@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from beets.library import Item
 
 INSTRUMENTAL_LYRICS = "[Instrumental]"
-BACKEND_NAMES = {"genius", "musixmatch", "lrclib", "tekstowo"}
+BACKEND_NAMES = {"genius", "musixmatch", "lrclib", "tekstowo", "qqmusic", "netease"}
 
 
 @dataclass

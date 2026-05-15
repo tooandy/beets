@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import math
 import re
 import textwrap
@@ -442,6 +443,307 @@ class MusiXmatch(Backend):
         if "Lyrics | Musixmatch" in lyrics:
             return None
         return Lyrics(lyrics, self.__class__.name, url)
+
+
+class QQMusic(Backend):
+    """Fetch lyrics from QQ Music."""
+
+    SEARCH_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+    LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric.fcg"
+
+    @classmethod
+    def _search(cls, artist: str, title: str, num: int = 5) -> list[dict]:
+        """Search for songs on QQ Music and return list of matches."""
+        import time
+
+        query = f"{artist} {title}"
+        pcachetime = str(int(time.time() * 1000))
+
+        payload = {
+            "comm": {
+                "_channelid": "0",
+                "_os_version": "6.1.7601-2%2C+Service+Pack+1",
+                "authst": "",
+                "ct": "19",
+                "cv": "1873",
+                "guid": "",
+                "patch": "118",
+                "psrf_access_token_expiresAt": 0,
+                "psrf_qqaccess_token": "",
+                "psrf_qqopenid": "",
+                "psrf_qqunionid": "",
+                "tmeAppID": "qqmusic",
+                "tmeLoginType": 2,
+                "uin": "0",
+                "wid": "0",
+            },
+            "music.search.SearchCgiService": {
+                "method": "DoSearchForQQMusicDesktop",
+                "module": "music.search.SearchCgiService",
+                "param": {
+                    "grp": 1,
+                    "num_per_page": num,
+                    "page_num": 1,
+                    "query": query,
+                    "remoteplace": "txt.newclient.top",
+                    "search_type": 0,
+                    "searchid": "",
+                },
+            },
+        }
+
+        headers = {
+            "Host": "u.y.qq.com",
+            "Origin": "https://y.qq.com",
+            "Referer": "https://y.qq.com/n/ryqq/player",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.post(
+            cls.SEARCH_URL,
+            json=payload,
+            headers=headers,
+            params={"pcachetime": pcachetime},
+        )
+        response.encoding = None
+
+        # Parse response and normalize JSON
+        text = response.text
+        text = text.replace("<em>", "", -1).replace("</em>", "", -1)
+        text = text.replace("callback({", "{", -1).replace("})", "}", -1)
+        text = text.replace("music.search.SearchCgiService", "music", -1)
+
+        try:
+            data = json.loads(text)
+        except Exception:
+            return []
+
+        try:
+            songs = data.get("music", {}) or {}
+            songs = songs.get("data", {}) or {}
+            songs = songs.get("body", {}) or {}
+            songs = songs.get("song", {}) or {}
+            songs = songs.get("list", [])
+        except (KeyError, TypeError):
+            return []
+
+        return songs
+
+    @classmethod
+    def _get_lyric(cls, songmid: str) -> str | None:
+        """Fetch lyric for a song by its songmid."""
+        params = {"songmid": songmid}
+        headers = {"Referer": "https://y.qq.com/"}
+
+        try:
+            response = requests.get(
+                cls.LYRIC_URL, params=params, headers=headers, timeout=10
+            )
+            response.encoding = None
+        except requests.RequestException:
+            return None
+
+        text = response.text
+        # Parse JSONP response: MusicJsonCallback({...})
+        text = text.replace("MusicJsonCallback(", "", -1).rstrip(")")
+
+        try:
+            data = json.loads(text)
+        except Exception:
+            return None
+
+        lyric_base64 = data.get("lyric")
+        if not lyric_base64:
+            return None
+
+        # Decode base64 lyric
+        import base64
+
+        try:
+            lyric = base64.b64decode(lyric_base64).decode("utf-8")
+            return lyric
+        except Exception:
+            return None
+
+    def fetch(
+        self, artist: str, title: str, album: str, length: int
+    ) -> Lyrics | None:
+        """Fetch lyrics for the given song."""
+        songs = self._search(artist, title, num=5)
+        if not songs:
+            return None
+
+        for song in songs:
+            songmid = song.get("mid")
+            if not songmid:
+                continue
+
+            lyric = self._get_lyric(songmid)
+            if lyric:
+                song_title = song.get("title", title)
+                song_artist = (
+                    ",".join(s.get("name", "") for s in song.get("singer", []))
+                    or artist
+                )
+                url = f"https://y.qq.com/n/ryqq/song/{songmid}"
+                return Lyrics(
+                    lyric.strip(),
+                    self.__class__.name,
+                    url,
+                )
+
+        return None
+
+
+class NetEase(Backend):
+    """Fetch lyrics from NetEase Cloud Music."""
+
+    SEARCH_URL = "https://api.spotoolfy.gojyuplus.com/cloudsearch"
+    LYRIC_URL = "https://api.spotoolfy.gojyuplus.com/lyric/new"
+
+    # Regex patterns for lyrics processing
+    HTML_ENTITY_PAT = re.compile(r"&#(\d+);")
+    METADATA_PAT = re.compile(r"^\[.*?\]\s*")
+
+    @staticmethod
+    def _decode_html_entities(text: str) -> str:
+        """Decode HTML entities like &#123; to unicode characters."""
+        while m := NetEase.HTML_ENTITY_PAT.search(text):
+            text = text.replace(m.group(0), chr(int(m.group(1))))
+        return text
+
+    @staticmethod
+    def _is_valid_lyric(text: str) -> bool:
+        """Check if text looks like valid lyrics."""
+        if not text or len(text.strip()) < 10:
+            return False
+        # Skip if it looks like an error message
+        invalid = {"error", "not found", "请求失败", "解析失败"}
+        return all(inv not in text.lower() for inv in invalid)
+
+    @staticmethod
+    def _filter_metadata(text: str) -> str:
+        """Remove metadata lines like [00:00:00] from lyrics start."""
+        lines = text.splitlines()
+        # Filter out metadata lines at the start
+        start = 0
+        while start < len(lines) and NetEase.METADATA_PAT.match(lines[start]):
+            start += 1
+        return "\n".join(lines[start:])
+
+    @staticmethod
+    def _parse_lrc_lyric(lrc_text: str) -> str | None:
+        """Parse NetEase lrc field which contains JSON metadata + plain text.
+
+        The lrc field format is multiple JSON lines followed by the actual lyrics.
+        Example:
+        {"c":[{"tx":"作词: "},{"tx":"某人"}]}
+        {"c":[{"tx":"作曲: "},{"tx":"某人"}]}
+        [00:00.00]实际歌词内容
+        """
+        if not lrc_text:
+            return None
+
+        lines = lrc_text.strip().split("\n")
+
+        # The last line(s) contain actual lyrics text (plain, without timestamps)
+        # Previous lines are JSON metadata that we should skip
+        lyrics_lines = []
+        metadata_lines = []
+
+        for line in lines:
+            if line.startswith("{"):
+                metadata_lines.append(line)
+            else:
+                # This is actual lyric text
+                text = line.strip()
+                if text:
+                    lyrics_lines.append(text)
+
+        if not lyrics_lines:
+            return None
+
+        # Join the actual lyric text
+        return "\n".join(lyrics_lines)
+
+    @staticmethod
+    def _convert_json_lyric(json_str: str) -> str | None:
+        """Convert JSON format lyric (from NetEase yrc/qrc) to LRC format."""
+        import json
+
+        try:
+            data = json.loads(json_str)
+        except Exception:
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        lines = []
+        # Handle NetEase yrc/qrc format with "lyric" array
+        for item in data.get("lyric", []):
+            if isinstance(item, dict):
+                time_tag = item.get("timeTag", "")
+                text = item.get("word", "")
+                if time_tag and text:
+                    # Convert time tag like "00:12.34" to "[00:12.34]"
+                    time_str = time_tag.replace(":", ".").replace(".", ":", 1)
+                    lines.append(f"[{time_str}]{text}")
+            elif isinstance(item, str):
+                lines.append(item)
+
+        return "\n".join(lines) if lines else None
+
+    def fetch(
+        self, artist: str, title: str, album: str, length: int
+    ) -> Lyrics | None:
+        """Fetch lyrics for the given song from NetEase."""
+        query = f"{title} {artist}"
+        kw = quote_plus(query)
+
+        # Search for the song
+        try:
+            data = self.get_json(
+                self.SEARCH_URL,
+                params={"keywords": query, "limit": 3},
+            )
+        except Exception:
+            return None
+
+        songs = data.get("result", {}).get("songs", [])
+        if not songs:
+            return None
+
+        song_id = songs[0].get("id")
+        if not song_id:
+            return None
+
+        # Get lyrics for the song
+        try:
+            lyric_data = self.get_json(
+                f"{self.LYRIC_URL}?id={song_id}",
+            )
+        except Exception:
+            return None
+
+        # Try yrc (enhanced synced lyrics) or qrc first
+        for field in ("yrc", "qrc"):
+            raw = lyric_data.get(field, {}).get("lyric", "")
+            if raw:
+                converted = self._convert_json_lyric(raw)
+                if converted:
+                    text = self._decode_html_entities(converted)
+                    if self._is_valid_lyric(text):
+                        return Lyrics(text, self.__class__.name, None)
+
+        # Fall back to lrc field (contains JSON metadata + plain lyrics)
+        lrc_raw = lyric_data.get("lrc", {}).get("lyric", "")
+        if lrc_raw:
+            text = self._parse_lrc_lyric(lrc_raw)
+            if text and self._is_valid_lyric(text):
+                return Lyrics(text, self.__class__.name, None)
+
+        return None
 
 
 class Html:
@@ -946,7 +1248,16 @@ class RestFiles:
 
 
 BACKEND_BY_NAME = {
-    b.name: b for b in [LRCLib, Google, Genius, Tekstowo, MusiXmatch]
+    b.name: b
+    for b in [
+        LRCLib,
+        Google,
+        Genius,
+        Tekstowo,
+        MusiXmatch,
+        QQMusic,
+        NetEase,
+    ]
 }
 
 
@@ -1000,12 +1311,12 @@ class LyricsPlugin(LyricsRequestHandler, plugins.BeetsPlugin):
                 "local": False,
                 "print": False,
                 "synced": False,
-                # Musixmatch and Tekstowo are disabled by default as they
-                # currently block requests with the beets user agent.
+                # Only LRCLib, QQMusic and NetEase are enabled by default as other sources
+                # (Google, Genius, Musixmatch, Tekstowo) are not accessible in China.
                 "sources": [
                     n
                     for n in BACKEND_BY_NAME
-                    if n not in {"musixmatch", "tekstowo"}
+                    if n in {"lrclib", "qqmusic", "netease"}
                 ],
             }
         )
