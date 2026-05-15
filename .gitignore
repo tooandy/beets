@@ -7,6 +7,7 @@
 
 # Project Specific patterns
 man
+test_music/
 
 # The rest is from https://www.gitignore.io/api/python
 

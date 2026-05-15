@@ -452,11 +452,10 @@ class QQMusic(Backend):
     LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric.fcg"
 
     @classmethod
-    def _search(cls, artist: str, title: str, num: int = 5) -> list[dict]:
+    def _search(cls, query: str, num: int = 5) -> list[dict]:
         """Search for songs on QQ Music and return list of matches."""
         import time
 
-        query = f"{artist} {title}"
         pcachetime = str(int(time.time() * 1000))
 
         payload = {
@@ -569,8 +568,15 @@ class QQMusic(Backend):
         self, artist: str, title: str, album: str, length: int
     ) -> Lyrics | None:
         """Fetch lyrics for the given song."""
-        songs = self._search(artist, title, num=5)
+        # Build query - include album if available for better search accuracy
+        query = f"{artist} {title}"
+        if album:
+            query = f"{artist} {title} {album}"
+
+        self.debug("Fetching lyrics for {} - {} (query: {})", artist, title, query)
+        songs = self._search(query, num=5)
         if not songs:
+            self.debug("No songs found for {} - {}", artist, title)
             return None
 
         for song in songs:
@@ -578,21 +584,49 @@ class QQMusic(Backend):
             if not songmid:
                 continue
 
+            # Check if song title matches the query (with fuzzy matching for Chinese)
+            song_title = song.get("title", "")
+            if not self._title_matches(title, song_title):
+                self.debug("Skipping {} - title does not match query {}",
+                          song_title, title)
+                continue
+
             lyric = self._get_lyric(songmid)
             if lyric:
-                song_title = song.get("title", title)
                 song_artist = (
                     ",".join(s.get("name", "") for s in song.get("singer", []))
                     or artist
                 )
                 url = f"https://y.qq.com/n/ryqq/song/{songmid}"
+                self.debug("Found lyrics for {} - {} ({} chars)", song_title, song_artist, len(lyric))
                 return Lyrics(
                     lyric.strip(),
                     self.__class__.name,
                     url,
                 )
 
+        self.debug("No lyrics found for {} - {}", artist, title)
         return None
+
+    @classmethod
+    def _title_matches(cls, query_title: str, result_title: str) -> bool:
+        """Check if result title matches query title (fuzzy for Chinese)."""
+        if not query_title or not result_title:
+            return False
+        # Exact match
+        if query_title == result_title:
+            return True
+        # Normalize and check (remove parentheses content for comparison)
+        import re
+        normalize = lambda t: re.sub(r'[（\(].*?[）\)]', '', t).strip().lower()
+        q_norm = normalize(query_title)
+        r_norm = normalize(result_title)
+        if q_norm == r_norm:
+            return True
+        # Check if query is contained in result or vice versa
+        if q_norm in r_norm or r_norm in q_norm:
+            return True
+        return False
 
 
 class NetEase(Backend):
@@ -698,8 +732,12 @@ class NetEase(Backend):
         self, artist: str, title: str, album: str, length: int
     ) -> Lyrics | None:
         """Fetch lyrics for the given song from NetEase."""
+        # Build query - include album if available for better search accuracy
         query = f"{title} {artist}"
-        kw = quote_plus(query)
+        if album:
+            query = f"{title} {artist} {album}"
+
+        self.debug("Fetching lyrics for {} - {} (query: {})", artist, title, query)
 
         # Search for the song
         try:
@@ -708,15 +746,20 @@ class NetEase(Backend):
                 params={"keywords": query, "limit": 3},
             )
         except Exception:
+            self.debug("Failed to fetch search results for {} - {}", artist, title)
             return None
 
         songs = data.get("result", {}).get("songs", [])
         if not songs:
+            self.debug("No songs found for query: {}", query)
             return None
 
         song_id = songs[0].get("id")
+        song_name = songs[0].get("name", title)
         if not song_id:
             return None
+
+        self.debug("Found song: {} (id: {})", song_name, song_id)
 
         # Get lyrics for the song
         try:
@@ -724,6 +767,7 @@ class NetEase(Backend):
                 f"{self.LYRIC_URL}?id={song_id}",
             )
         except Exception:
+            self.debug("Failed to fetch lyrics for song id: {}", song_id)
             return None
 
         # Try yrc (enhanced synced lyrics) or qrc first
@@ -734,6 +778,7 @@ class NetEase(Backend):
                 if converted:
                     text = self._decode_html_entities(converted)
                     if self._is_valid_lyric(text):
+                        self.debug("Found {} lyrics ({} chars) for {} - {}", field, len(text), artist, title)
                         return Lyrics(text, self.__class__.name, None)
 
         # Fall back to lrc field (contains JSON metadata + plain lyrics)
@@ -741,8 +786,10 @@ class NetEase(Backend):
         if lrc_raw:
             text = self._parse_lrc_lyric(lrc_raw)
             if text and self._is_valid_lyric(text):
+                self.debug("Found lrc lyrics ({} chars) for {} - {}", len(text), artist, title)
                 return Lyrics(text, self.__class__.name, None)
 
+        self.debug("No lyrics found for {} - {}", artist, title)
         return None
 
 
