@@ -1412,7 +1412,7 @@ class QQMusicArt(RemoteArtSource):
 
         for album_item in albums:
             try:
-                albummid = album_item.get("albummid")
+                albummid = album_item.get("albumMID")
                 if not albummid:
                     continue
 
