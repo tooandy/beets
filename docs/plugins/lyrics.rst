@@ -115,6 +115,10 @@ The available options are:
   Currently ``lrclib`` is the only source that provides them. Using this option,
   existing synced lyrics are not replaced by newly fetched plain lyrics (even
   when ``force`` is enabled). To allow that replacement, disable ``synced``.
+- **zh_style**: Convert lyrics between simplified and traditional Chinese.
+  Set to ``simplified`` to convert traditional Chinese lyrics to simplified
+  Chinese, ``traditional`` for the reverse, or ``original`` (default) to keep
+  the original text unchanged.
 
 .. _beets custom search engine: https://cse.google.com/cse?cx=009217259823014548361:lndtuqkycfu
 

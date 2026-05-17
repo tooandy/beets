@@ -132,6 +132,7 @@ databases. They share the following configuration options:
     types
     unimported
     web
+    zhconv
     zero
 
 .. _autotagger_extensions:
@@ -400,6 +401,9 @@ mstream_
 
 :doc:`web <web>`
     An experimental Web-based GUI for beets.
+
+:doc:`zhconv <zhconv>`
+    Convert Chinese text between simplified and traditional Chinese.
 
 .. _mpd: https://www.musicpd.org/
 

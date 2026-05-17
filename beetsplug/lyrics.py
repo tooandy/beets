@@ -41,6 +41,7 @@ from beets.dbcore.query import FalseQuery
 from beets.library import Item, parse_query_string
 from beets.util.config import sanitize_choices
 from beets.util.lyrics import INSTRUMENTAL_LYRICS, Lyrics
+from beets.util import zhstyle
 
 from ._utils.requests import HTTPNotFoundError, RequestHandler
 
@@ -1365,6 +1366,7 @@ class LyricsPlugin(LyricsRequestHandler, plugins.BeetsPlugin):
                     for n in BACKEND_BY_NAME
                     if n in {"lrclib", "qqmusic", "netease"}
                 ],
+                "zh_style": "original",  # 'original' | 'simplified' | 'traditional'
             }
         )
         self.config["translate"]["api_key"].redact = True
@@ -1491,6 +1493,13 @@ class LyricsPlugin(LyricsRequestHandler, plugins.BeetsPlugin):
                     del item[item_key]
 
             lyrics_text = new_lyrics.full_text
+
+            # Convert Chinese text style (simplified/traditional)
+            zh_style = self.config["zh_style"].get()
+            if zh_style == "simplified":
+                lyrics_text = zhstyle.to_simplified(lyrics_text)
+            elif zh_style == "traditional":
+                lyrics_text = zhstyle.to_traditional(lyrics_text)
         else:
             self.info("🔴 Lyrics not found: {}", item)
             lyrics_text = self.config["fallback"].get()
