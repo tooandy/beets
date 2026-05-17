@@ -1308,6 +1308,127 @@ class CoverArtUrl(RemoteArtSource):
             return
 
 
+class QQMusicArt(RemoteArtSource):
+    """Fetch album art from QQ Music."""
+
+    NAME = "QQ Music"
+    ID = "qqmusic"
+    SEARCH_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+
+    def get(
+        self,
+        album: Album,
+        plugin: FetchArtPlugin,
+        paths: None | Sequence[bytes],
+    ) -> Iterator[Candidate]:
+        if not (album.albumartist and album.album):
+            return
+
+        query = f"{album.albumartist} {album.album}"
+        import time
+
+        pcachetime = str(int(time.time() * 1000))
+
+        payload = {
+            "comm": {
+                "_channelid": "0",
+                "_os_version": "6.1.7601-2%2C+Service+Pack+1",
+                "authst": "",
+                "ct": "19",
+                "cv": "1873",
+                "guid": "",
+                "patch": "118",
+                "psrf_access_token_expiresAt": 0,
+                "psrf_qqaccess_token": "",
+                "psrf_qqopenid": "",
+                "psrf_qqunionid": "",
+                "tmeAppID": "qqmusic",
+                "tmeLoginType": 2,
+                "uin": "0",
+                "wid": "0",
+            },
+            "music.search.SearchCgiService": {
+                "method": "DoSearchForQQMusicDesktop",
+                "module": "music.search.SearchCgiService",
+                "param": {
+                    "grp": 1,
+                    "num_per_page": 5,
+                    "page_num": 1,
+                    "query": query,
+                    "remoteplace": "txt.newclient.top",
+                    "search_type": 2,  # ALBUM = 2
+                    "searchid": "",
+                },
+            },
+        }
+
+        headers = {
+            "Host": "u.y.qq.com",
+            "Origin": "https://y.qq.com",
+            "Referer": "https://y.qq.com/n/ryqq/player",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            response = requests.post(
+                self.SEARCH_URL,
+                json=payload,
+                headers=headers,
+                params={"pcachetime": pcachetime},
+                timeout=10,
+            )
+            response.encoding = None
+        except requests.RequestException as e:
+            self._log.debug("QQ Music: error receiving response: {}", e)
+            return
+
+        # Parse response
+        text = response.text
+        text = text.replace("<em>", "", -1).replace("</em>", "", -1)
+        text = text.replace("callback({", "{", -1).replace("})", "}", -1)
+        text = text.replace("music.search.SearchCgiService", "music", -1)
+
+        try:
+            import json
+
+            data = json.loads(text)
+        except Exception:
+            self._log.debug("QQ Music: error parsing response")
+            return
+
+        try:
+            albums = data.get("music", {}) or {}
+            albums = albums.get("data", {}) or {}
+            albums = albums.get("body", {}) or {}
+            albums = albums.get("album", {}) or {}
+            albums = albums.get("list", [])
+        except (KeyError, TypeError):
+            self._log.debug("QQ Music: error extracting album list")
+            return
+
+        if not albums:
+            self._log.debug("QQ Music: no albums found for {}", query)
+            return
+
+        for album_item in albums:
+            try:
+                albummid = album_item.get("albummid")
+                if not albummid:
+                    continue
+
+                # Build cover URL using the same format as QQMusicApi
+                # https://y.gtimg.cn/music/photo_new/T002R800x800M000{albummid}.jpg
+                cover_url = (
+                    f"https://y.gtimg.cn/music/photo_new/T002R800x800M000{albummid}.jpg"
+                )
+                self._log.debug(
+                    "QQ Music: found art candidate: {}", cover_url
+                )
+                yield self._candidate(url=cover_url, match=MetadataMatch.EXACT)
+            except (KeyError, TypeError):
+                continue
+
+
 # All art sources. The order they will be tried in is specified by the config.
 ART_SOURCES: set[type[ArtSource]] = {
     FileSystem,
@@ -1321,6 +1442,7 @@ ART_SOURCES: set[type[ArtSource]] = {
     LastFM,
     Spotify,
     CoverArtUrl,
+    QQMusicArt,
 }
 
 
