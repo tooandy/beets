@@ -4,6 +4,9 @@ library: library.db
 directory: ~/Music
 statefile: state.pickle
 
+# Chinese text style conversion: 'original' | 'simplified' | 'traditional'
+zh_style: original
+
 # --------------- Plugins ---------------
 
 plugins: [musicbrainz]

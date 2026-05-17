@@ -28,7 +28,7 @@ class ZhConvPlugin(BeetsPlugin):
     @property
     def converter(self):
         """Return the appropriate conversion function based on config."""
-        style = config["import"]["zh_style"].get()
+        style = config["zh_style"].get()
         if style == "simplified":
             return zhstyle.to_simplified
         elif style == "traditional":
@@ -53,9 +53,11 @@ class ZhConvPlugin(BeetsPlugin):
         """Convert AlbumInfo fields to the target Chinese style."""
         convert = self.converter
 
-        # Album-level fields (AlbumInfo.__init__ params)
+        # Album-level fields (scalar strings)
         self.convert_field(info, "album")
         self.convert_field(info, "artist")
+        self.convert_field(info, "artist_credit")
+        self.convert_field(info, "artist_sort")
         self.convert_field(info, "label")
         self.convert_field(info, "genre")
         self.convert_field(info, "style")
@@ -66,29 +68,47 @@ class ZhConvPlugin(BeetsPlugin):
         self.convert_field(info, "release_group_title")
         self.convert_field(info, "catalognum")
         self.convert_field(info, "country")
+        self.convert_field(info, "script")
+
+        # Album-level fields (lists)
+        self.convert_field(info, "artists")
+        self.convert_field(info, "artists_credit")
+        self.convert_field(info, "artists_sort")
+        self.convert_field(info, "genres")
+        self.convert_field(info, "albumtypes")
 
         # Track-level fields inside AlbumInfo.tracks
         for track in info.tracks:
-            track.title = convert(track.title) if isinstance(track.title, str) else track.title
-            track.artist = convert(track.artist) if isinstance(track.artist, str) else track.artist
-            track.disctitle = convert(track.disctitle) if isinstance(track.disctitle, str) else track.disctitle
-            track.arrangers = self.convert_value(track.arrangers)
-            track.composers = self.convert_value(track.composers)
-            track.composer_sort = self.convert_value(track.composer_sort)
-            track.lyricists = self.convert_value(track.lyricists)
-            track.remixers = self.convert_value(track.remixers)
-            track.work = convert(track.work) if isinstance(track.work, str) else track.work
-            track.work_disambig = convert(track.work_disambig) if isinstance(track.work_disambig, str) else track.work_disambig
+            self.convert_track_info(track)
 
     def trackinfo_received(self, info: TrackInfo):
         """Convert TrackInfo fields to the target Chinese style (singleton import)."""
+        self.convert_track_info(info)
+
+    def convert_track_info(self, track: TrackInfo):
+        """Convert all Chinese text fields in a TrackInfo object."""
         convert = self.converter
-        self.convert_field(info, "title")
-        self.convert_field(info, "disctitle")
-        self.convert_field(info, "arrangers")
-        self.convert_field(info, "composers")
-        self.convert_field(info, "composer_sort")
-        self.convert_field(info, "lyricists")
-        self.convert_field(info, "remixers")
-        self.convert_field(info, "work")
-        self.convert_field(info, "work_disambig")
+
+        # Scalar string fields
+        self.convert_field(track, "title")
+        self.convert_field(track, "artist")
+        self.convert_field(track, "artist_credit")
+        self.convert_field(track, "artist_sort")
+        self.convert_field(track, "album")
+        self.convert_field(track, "disctitle")
+        self.convert_field(track, "work")
+        self.convert_field(track, "work_disambig")
+        self.convert_field(track, "composer_sort")
+
+        # List fields
+        self.convert_field(track, "artists")
+        self.convert_field(track, "artists_credit")
+        self.convert_field(track, "artists_sort")
+        self.convert_field(track, "arrangers")
+        self.convert_field(track, "composers")
+        self.convert_field(track, "composers_ids")
+        self.convert_field(track, "lyricists")
+        self.convert_field(track, "lyricists_ids")
+        self.convert_field(track, "remixers")
+        self.convert_field(track, "remixers_ids")
+        self.convert_field(track, "arrangers_ids")

@@ -34,7 +34,7 @@ import requests
 from bs4 import BeautifulSoup
 from unidecode import unidecode
 
-from beets import plugins, ui
+from beets import config, plugins, ui
 from beets.autotag.distance import string_dist
 from beets.dbcore import types
 from beets.dbcore.query import FalseQuery
@@ -1366,9 +1366,9 @@ class LyricsPlugin(LyricsRequestHandler, plugins.BeetsPlugin):
                     for n in BACKEND_BY_NAME
                     if n in {"lrclib", "qqmusic", "netease"}
                 ],
-                "zh_style": "original",  # 'original' | 'simplified' | 'traditional'
             }
         )
+        # zh_style is now read from top-level config, not plugin config
         self.config["translate"]["api_key"].redact = True
         self.config["google_API_key"].redact = True
         self.config["google_engine_ID"].redact = True
@@ -1495,7 +1495,7 @@ class LyricsPlugin(LyricsRequestHandler, plugins.BeetsPlugin):
             lyrics_text = new_lyrics.full_text
 
             # Convert Chinese text style (simplified/traditional)
-            zh_style = self.config["zh_style"].get()
+            zh_style = config["zh_style"].get()
             if zh_style == "simplified":
                 lyrics_text = zhstyle.to_simplified(lyrics_text)
             elif zh_style == "traditional":

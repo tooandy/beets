@@ -21,6 +21,7 @@ from requests_ratelimiter import LimiterMixin
 from typing_extensions import NotRequired, Unpack
 
 from beets import config, logging
+from beets.util import zhstyle
 
 from .requests import RequestHandler, TimeoutAndRetrySession
 
@@ -593,7 +594,14 @@ class MusicBrainzAPI(RequestHandler):
 
     def get_json(self, *args, **kwargs):
         """Fetch JSON data from MusicBrainz and normalize its field names."""
-        return self._normalize_data(super().get_json(*args, **kwargs))
+        data = self._normalize_data(super().get_json(*args, **kwargs))
+        # Apply Chinese text style conversion based on zh_style config
+        zh_style = config["zh_style"].get()
+        if zh_style == "simplified":
+            data = zhstyle.convert_dict(data, zhstyle.to_simplified)
+        elif zh_style == "traditional":
+            data = zhstyle.convert_dict(data, zhstyle.to_traditional)
+        return data
 
     def _get_resource(
         self, resource: str, includes: list[str] | None = None, **kwargs
