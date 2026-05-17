@@ -1429,6 +1429,64 @@ class QQMusicArt(RemoteArtSource):
                 continue
 
 
+class NetEaseArt(RemoteArtSource):
+    """Fetch album art from NetEase Music."""
+
+    NAME = "NetEase Music"
+    ID = "netease"
+    SEARCH_URL = "https://music.163.com/api/search/get"
+
+    def get(
+        self,
+        album: Album,
+        plugin: FetchArtPlugin,
+        paths: None | Sequence[bytes],
+    ) -> Iterator[Candidate]:
+        if not (album.albumartist and album.album):
+            return
+
+        query = f"{album.albumartist} {album.album}"
+
+        params = {
+            "s": query,
+            "type": 10,  # ALBUM
+            "limit": 5,
+            "offset": 0,
+        }
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+        try:
+            response = requests.get(
+                self.SEARCH_URL, params=params, headers=headers, timeout=10
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            self._log.debug("NetEase Music: error receiving response: {}", e)
+            return
+
+        try:
+            data = response.json()
+        except Exception:
+            self._log.debug("NetEase Music: error parsing response")
+            return
+
+        albums = data.get("result", {}).get("albums", [])
+        if not albums:
+            self._log.debug("NetEase Music: no albums found for {}", query)
+            return
+
+        for album_item in albums:
+            pic_url = album_item.get("picUrl")
+            if pic_url:
+                self._log.debug(
+                    "NetEase Music: found art candidate: {}", pic_url
+                )
+                yield self._candidate(url=pic_url, match=MetadataMatch.EXACT)
+
+
 # All art sources. The order they will be tried in is specified by the config.
 ART_SOURCES: set[type[ArtSource]] = {
     FileSystem,
@@ -1443,6 +1501,7 @@ ART_SOURCES: set[type[ArtSource]] = {
     Spotify,
     CoverArtUrl,
     QQMusicArt,
+    NetEaseArt,
 }
 
 
